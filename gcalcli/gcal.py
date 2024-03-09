@@ -7,14 +7,15 @@ import os
 import random
 import re
 import shlex
+import subprocess
 import sys
 import textwrap
 import time
 from typing import List
 from unicodedata import east_asian_width
 
-from apiclient.discovery import build
-from apiclient.errors import HttpError
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
 from dateutil.tz import tzlocal
@@ -24,10 +25,10 @@ from oauth2client.client import OAuth2WebServerFlow
 from oauth2client.file import Storage
 
 from . import __program__, __version__, actions, utils
-from ._types import Cache, CalendarListEntry
+from ._types import Cache, CalendarListEntry, Event
 from .actions import ACTIONS
 from .conflicts import ShowConflicts
-from .details import _valid_title, ACTION_DEFAULT, DETAILS_DEFAULT, HANDLERS
+from .details import ID, Handler, _valid_title, ACTION_DEFAULT, DETAILS_DEFAULT, HANDLERS
 from .exceptions import GcalcliError
 from .printer import Printer
 from .utils import days_since_epoch, is_all_day
@@ -588,14 +589,91 @@ class GoogleCalendarInterface:
             else:
                 self.printer.msg(week_bottom + '\n', color_border)
 
-    def _tsv(self, start_datetime, event_list):
+    def bulk_edit(self, events: list[Event]):
+        keys = ['id', 'time', 'title']
+        handlers = [handler
+                    for key, handler in HANDLERS.items()
+                    if key in keys]
+
+        header_row = chain.from_iterable(handler.fieldnames
+                                         for handler in handlers)
+        fieldname_to_handler: dict[str, Handler] = {}
+        for handler in handlers:
+            for fieldname in handler.fieldnames:
+                fieldname_to_handler[fieldname] = handler
+
+        event_index = {event["id"]: event for event in events}
+
+        import tempfile
+
+        pre_modified = {}
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as file:
+            file_path = file.name
+            print(*header_row, sep='\t', file=file)
+
+            for event in events:
+                if self.options['ignore_started'] and (event['s'] < self.now):
+                    continue
+                if self.options['ignore_declined'] and self._DeclinedEvent(event):
+                    continue
+
+                row = []
+                for handler in handlers:
+                    row.extend(handler.get(event))
+
+                pre_modified[ID.get(event)[0]] = row
+
+                output = ('\t'.join(row)).replace('\n', r'\n')
+                print(output, file=file)
+
+        import os
+
+        editor = os.environ.get("EDITOR", "vim")
+
+        try:
+            subprocess.run([editor, file_path], check=True)
+        except subprocess.CalledProcessError as e:
+            sys.exit(1)
+
+        def parse_events(lines: list[str]) -> dict[str, list]:
+            parsed = {}
+            for line in lines:
+                fields = line.strip().split("\t")
+                parsed[fields[0]] = fields
+            return parsed
+
+        modified_events = []
+        with open(file_path) as file:
+
+            maybe_modified_events = parse_events(file.readlines()[1:])
+            for event_id, event_fields in maybe_modified_events.items():
+                if pre_modified[event_id] == event_fields:
+                    continue
+                else:
+                    print(pre_modified[event_id])
+                    print(event_fields)
+                    print("-----")
+                    modified_events.append(event_fields)
+
+            answer: str = get_input(self.printer, "Save events? ", lambda x: x)
+            if answer.lower() in ("y", "yes"):
+                for event_id, event_fields in maybe_modified_events:
+                    event = event_index[event_id]
+                    cal = event["gcalcli_cal"]
+                    for fieldname, value in zip(header_row[1:], event_fields):
+                        handler = fieldname_to_handler[fieldname]
+                        handler.patch(event, cal, fieldname, value)
+
+                    print(event)
+
+    def _tsv(self, start_datetime, event_list: list[Event]):
         keys = set(self.details.keys())
         keys.update(DETAILS_DEFAULT)
 
         handlers = [handler
                     for key, handler in HANDLERS.items()
                     if key in keys]
-
         header_row = chain.from_iterable(handler.fieldnames
                                          for handler in handlers)
         print(*header_row, sep='\t')
@@ -1090,7 +1168,7 @@ class GoogleCalendarInterface:
 
         return event_list
 
-    def _search_for_events(self, start, end, search_text):
+    def _search_for_events(self, start, end, search_text) -> list[Event]:
 
         event_list = []
         for cal in self.cals:
@@ -1194,6 +1272,15 @@ class GoogleCalendarInterface:
                                     event_list,
                                     year_date=False,
                                     work=show_conflicts.show_conflicts)
+
+    def query_events(self, start=None, end=None):
+        if not start:
+            start = self.now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if not end:
+            end = (start + timedelta(days=self.agenda_length))
+
+        return self._search_for_events(start, end, None)
 
     def AgendaQuery(self, start=None, end=None):
         if not start:

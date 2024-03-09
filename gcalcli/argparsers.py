@@ -304,6 +304,8 @@ def get_argument_parser():
     delete.add_argument(
             '--iamaexpert', action='store_true', help='Probably not')
 
+    sub.add_parser("bulk-edit", parents=[output_parser, start_end_parser])
+
     sub.add_parser(
             'agenda',
             parents=[details_parser, output_parser, start_end_parser],

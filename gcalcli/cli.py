@@ -84,6 +84,7 @@ def run_add_prompt(parsed_args, printer):
 
 
 def main():
+    print("FUXCK")
     parser = get_argument_parser()
     try:
         argv = sys.argv[1:]
@@ -148,6 +149,9 @@ def main():
 
         elif parsed_args.command == 'agenda':
             gcal.AgendaQuery(start=parsed_args.start, end=parsed_args.end)
+
+        elif parsed_args.command == 'bulk-edit':
+            gcal.bulk_edit(gcal.query_events(start=parsed_args.start, end=parsed_args.end))
 
         elif parsed_args.command == 'agendaupdate':
             gcal.AgendaUpdate(parsed_args.file)
