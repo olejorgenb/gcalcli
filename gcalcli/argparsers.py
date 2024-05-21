@@ -306,6 +306,7 @@ def get_argument_parser():
 
     sub.add_parser("bulk-edit", parents=[output_parser, start_end_parser])
 
+    print("fuckfuckfuck")
     sub.add_parser(
             'agenda',
             parents=[details_parser, output_parser, start_end_parser],

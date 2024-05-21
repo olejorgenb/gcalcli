@@ -84,7 +84,6 @@ def run_add_prompt(parsed_args, printer):
 
 
 def main():
-    print("FUXCK")
     parser = get_argument_parser()
     try:
         argv = sys.argv[1:]

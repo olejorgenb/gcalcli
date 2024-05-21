@@ -639,8 +639,8 @@ class GoogleCalendarInterface:
                     for key, handler in HANDLERS.items()
                     if key in keys]
 
-        header_row = chain.from_iterable(handler.fieldnames
-                                         for handler in handlers)
+        header_row = list(chain.from_iterable(handler.fieldnames
+                                              for handler in handlers))
         fieldname_to_handler: dict[str, Handler] = {}
         for handler in handlers:
             for fieldname in handler.fieldnames:
@@ -687,7 +687,7 @@ class GoogleCalendarInterface:
                 parsed[fields[0]] = fields
             return parsed
 
-        modified_events = []
+        modified_events = {}
         with open(file_path) as file:
 
             maybe_modified_events = parse_events(file.readlines()[1:])
@@ -698,18 +698,40 @@ class GoogleCalendarInterface:
                     print(pre_modified[event_id])
                     print(event_fields)
                     print("-----")
-                    modified_events.append(event_fields)
+                    modified_events[event_id] = event_fields
 
             answer: str = get_input(self.printer, "Save events? ", lambda x: x)
             if answer.lower() in ("y", "yes"):
-                for event_id, event_fields in maybe_modified_events:
+                for event_id, event_fields in modified_events.items():
                     event = event_index[event_id]
                     cal = event["gcalcli_cal"]
-                    for fieldname, value in zip(header_row[1:], event_fields):
+
+                    mod_event = {}
+                    for fieldname, value in zip(header_row[1:], event_fields[1:]):
                         handler = fieldname_to_handler[fieldname]
-                        handler.patch(event, cal, fieldname, value)
+                        handler.patch(cal, event, fieldname, value)
+                        # for fn, v in zip(handler.fieldnames, handler.get(event)):
+                        #     mod[fn] = v
+
+                    keys = ['summary', 'location', 'start', 'end', 'reminders',
+                            'description', 'colorId']
+                    for k in keys:
+                        if k in event:
+                            mod_event[k] = event[k]
 
                     print(event)
+                    print(mod_event)
+
+                    print("Trying to save")
+                    self._retry_with_backoff(
+                        self.get_events().patch(
+                            calendarId=event['gcalcli_cal']['id'],
+                            eventId=event['id'],
+                            body=mod_event,
+                        )
+                    )
+                    print("Saved")
+
 
     def _tsv(self, start_datetime, event_list: list[Event]):
         keys = set(self.details.keys())
